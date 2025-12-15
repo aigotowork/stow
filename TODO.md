@@ -1,0 +1,5 @@
+1. 增加暴露读取 File path 的能力供高级用户使用
+2. 解决一个 json 当中的 io.Reader/filetype 每次 save 的时候都要读取并存储？有时候只是修改整个json中的小字段，也要重新读和写？ 当一个 json 存了文件列表的时候，也要这样存？
+3. 在 namespace 内实现跨 json 的引用，以实现一个对象的某 key 的 value 是另一个 json 的场景。
+4. RawItem 增加遍历子 field 的能力，增加判断是否为文件等类型的能力(获取类型)，增加把某字段读取为 FileItem 的相关类型 (尤其要增强对 file 相关类型的处理能力，比如定义一个 FileItem 的接口或类型，可用于查看信息读取等等)
+5. 增加对结构体本身就是一个 io.Reader 或大 []byte 等的情况支持和验证
