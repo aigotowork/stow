@@ -8,6 +8,44 @@ import (
 	"time"
 )
 
+const (
+	// scalarValueKey is used to wrap scalar values in a map.
+	scalarValueKey = "$value"
+)
+
+// dereferenceValue dereferences a pointer value if it's a pointer.
+// Returns the dereferenced value or the original value if not a pointer.
+func dereferenceValue(val reflect.Value) reflect.Value {
+	if val.Kind() == reflect.Ptr {
+		return val.Elem()
+	}
+	return val
+}
+
+// getFieldName extracts the field name from struct field, considering JSON tags.
+// Returns the field name from the JSON tag if present, otherwise returns the struct field name.
+func getFieldName(fieldType reflect.StructField) string {
+	fieldName := fieldType.Name
+	jsonTag := fieldType.Tag.Get("json")
+
+	if jsonTag != "" && jsonTag != "-" {
+		parts := strings.Split(jsonTag, ",")
+		fieldName = parts[0]
+	}
+
+	return fieldName
+}
+
+// isTimeType checks if a value is time.Time or *time.Time.
+func isTimeType(value interface{}) bool {
+	switch value.(type) {
+	case time.Time, *time.Time:
+		return true
+	default:
+		return false
+	}
+}
+
 // FieldInfo contains information about a struct field that might need blob storage.
 type FieldInfo struct {
 	Name      string      // Field name
@@ -51,12 +89,7 @@ func IsBlob(value interface{}, tagInfo TagInfo, threshold int64, forceFile bool)
 
 // ExtractBlobFields extracts all fields from a struct that should be stored as blobs.
 func ExtractBlobFields(value interface{}, threshold int64) ([]FieldInfo, error) {
-	val := reflect.ValueOf(value)
-
-	// Dereference pointer
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
+	val := dereferenceValue(reflect.ValueOf(value))
 
 	if val.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("value is not a struct")
@@ -96,12 +129,7 @@ func ExtractBlobFields(value interface{}, threshold int64) ([]FieldInfo, error) 
 // ResolveNameField resolves the name_field reference in a struct.
 // Returns the value of the referenced field as a string.
 func ResolveNameField(structValue interface{}, nameField string) (string, error) {
-	val := reflect.ValueOf(structValue)
-
-	// Dereference pointer
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
+	val := dereferenceValue(reflect.ValueOf(structValue))
 
 	if val.Kind() != reflect.Struct {
 		return "", fmt.Errorf("value is not a struct")
@@ -132,7 +160,7 @@ func ResolveNameField(structValue interface{}, nameField string) (string, error)
 // Supports structs, maps, and scalar values (wrapped in a map).
 func ToMap(value interface{}) (map[string]interface{}, error) {
 	if value == nil {
-		return map[string]interface{}{"$value": nil}, nil
+		return map[string]interface{}{scalarValueKey: nil}, nil
 	}
 
 	val := reflect.ValueOf(value)
@@ -140,7 +168,7 @@ func ToMap(value interface{}) (map[string]interface{}, error) {
 	// Dereference pointer
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
-			return map[string]interface{}{"$value": nil}, nil
+			return map[string]interface{}{scalarValueKey: nil}, nil
 		}
 		val = val.Elem()
 	}
@@ -162,8 +190,8 @@ func ToMap(value interface{}) (map[string]interface{}, error) {
 
 	// Convert struct to map
 	if val.Kind() != reflect.Struct {
-		// Wrap scalar values in a map with "$value" key
-		return map[string]interface{}{"$value": value}, nil
+		// Wrap scalar values in a map with scalarValueKey key
+		return map[string]interface{}{scalarValueKey: value}, nil
 	}
 
 	result := make(map[string]interface{})
@@ -178,44 +206,20 @@ func ToMap(value interface{}) (map[string]interface{}, error) {
 			continue
 		}
 
-		// Get JSON tag name or use field name
-		jsonTag := fieldType.Tag.Get("json")
-		fieldName := fieldType.Name
-
-		if jsonTag != "" && jsonTag != "-" {
-			// Use JSON tag name
-			parts := strings.Split(jsonTag, ",")
-			fieldName = parts[0]
-		}
-
-		// Get field value
+		fieldName := getFieldName(fieldType)
 		fieldValue := field.Interface()
 
 		// Handle nested structs recursively
 		// Special case: time.Time should be treated as a value, not recursively converted
-		if field.Kind() == reflect.Struct {
-			// Check if it's time.Time
-			if _, ok := fieldValue.(time.Time); ok {
-				// time.Time should be treated as a value
+		if field.Kind() == reflect.Struct || (field.Kind() == reflect.Ptr && !field.IsNil() && field.Elem().Kind() == reflect.Struct) {
+			if isTimeType(fieldValue) {
+				// time.Time or *time.Time should be treated as a value
 				result[fieldName] = fieldValue
 			} else {
 				// Recursively convert nested struct to map
 				nested, err := ToMap(fieldValue)
 				if err != nil {
 					return nil, fmt.Errorf("failed to convert nested struct field %s: %w", fieldName, err)
-				}
-				result[fieldName] = nested
-			}
-		} else if field.Kind() == reflect.Ptr && !field.IsNil() && field.Elem().Kind() == reflect.Struct {
-			// Check if it's *time.Time
-			if _, ok := fieldValue.(*time.Time); ok {
-				// *time.Time should be treated as a value
-				result[fieldName] = fieldValue
-			} else {
-				// Handle pointer to struct
-				nested, err := ToMap(fieldValue)
-				if err != nil {
-					return nil, fmt.Errorf("failed to convert nested struct pointer field %s: %w", fieldName, err)
 				}
 				result[fieldName] = nested
 			}
@@ -230,7 +234,7 @@ func ToMap(value interface{}) (map[string]interface{}, error) {
 
 // FromMap converts map[string]interface{} to a target value.
 // This is used for deserialization.
-// Supports structs, maps, and scalar values (unwrapped from "$value" key).
+// Supports structs, maps, and scalar values (unwrapped from scalarValueKey key).
 func FromMap(data map[string]interface{}, target interface{}) error {
 	val := reflect.ValueOf(target)
 
@@ -243,7 +247,7 @@ func FromMap(data map[string]interface{}, target interface{}) error {
 
 	// Check if this is a wrapped scalar value
 	if len(data) == 1 {
-		if scalarValue, ok := data["$value"]; ok {
+		if scalarValue, ok := data[scalarValueKey]; ok {
 			// This is a wrapped scalar value
 			if scalarValue == nil {
 				val.Set(reflect.Zero(val.Type()))
@@ -256,17 +260,12 @@ func FromMap(data map[string]interface{}, target interface{}) error {
 				return nil
 			}
 
-			// Try to set the value
-			scalarVal := reflect.ValueOf(scalarValue)
-			if scalarVal.Type().AssignableTo(val.Type()) {
-				val.Set(scalarVal)
-				return nil
+			// For complex types (slices, maps, structs), use setFieldValue
+			// which has proper logic to handle type conversions
+			if err := setFieldValue(val, scalarValue); err != nil {
+				return fmt.Errorf("failed to set value: %w", err)
 			}
-			if scalarVal.Type().ConvertibleTo(val.Type()) {
-				val.Set(scalarVal.Convert(val.Type()))
-				return nil
-			}
-			return fmt.Errorf("cannot convert %v to %v", scalarVal.Type(), val.Type())
+			return nil
 		}
 	}
 
@@ -298,14 +297,7 @@ func FromMap(data map[string]interface{}, target interface{}) error {
 			continue
 		}
 
-		// Get field name from JSON tag or field name
-		jsonTag := fieldType.Tag.Get("json")
-		fieldName := fieldType.Name
-
-		if jsonTag != "" && jsonTag != "-" {
-			parts := strings.Split(jsonTag, ",")
-			fieldName = parts[0]
-		}
+		fieldName := getFieldName(fieldType)
 
 		// Get value from map
 		mapValue, ok := data[fieldName]
@@ -325,98 +317,138 @@ func FromMap(data map[string]interface{}, target interface{}) error {
 // setFieldValue sets a reflect.Value from an interface{}.
 func setFieldValue(field reflect.Value, value interface{}) error {
 	if value == nil {
-		// Set to zero value
 		field.Set(reflect.Zero(field.Type()))
 		return nil
 	}
 
-	// Check if field is a struct and value is a map (nested struct case)
-	if field.Kind() == reflect.Struct {
-		if mapValue, ok := value.(map[string]interface{}); ok {
-			// Recursively unmarshal nested struct
-			fieldPtr := field.Addr().Interface()
-			return FromMap(mapValue, fieldPtr)
-		}
+	// Handle different field kinds
+	switch field.Kind() {
+	case reflect.Struct:
+		return setStructField(field, value)
+
+	case reflect.Ptr:
+		return setPointerField(field, value)
+
+	case reflect.Map:
+		return setMapField(field, value)
+
+	case reflect.Slice:
+		return setSliceField(field, value)
+
+	case reflect.Array:
+		return setArrayField(field, value)
+
+	default:
+		return setScalarField(field, value)
+	}
+}
+
+// setStructField handles struct field assignment.
+func setStructField(field reflect.Value, value interface{}) error {
+	if mapValue, ok := value.(map[string]interface{}); ok {
+		return FromMap(mapValue, field.Addr().Interface())
+	}
+	return setScalarField(field, value)
+}
+
+// setPointerField handles pointer field assignment.
+func setPointerField(field reflect.Value, value interface{}) error {
+	if field.IsNil() {
+		field.Set(reflect.New(field.Type().Elem()))
 	}
 
-	// Check if field is a pointer to struct
-	if field.Kind() == reflect.Ptr && field.Type().Elem().Kind() == reflect.Struct {
+	// If pointer to struct, handle as struct
+	if field.Type().Elem().Kind() == reflect.Struct {
 		if mapValue, ok := value.(map[string]interface{}); ok {
-			// Create new struct instance if nil
-			if field.IsNil() {
-				field.Set(reflect.New(field.Type().Elem()))
-			}
-			// Recursively unmarshal nested struct
 			return FromMap(mapValue, field.Interface())
 		}
 	}
 
-	// Check if field is a map
-	if field.Kind() == reflect.Map {
-		if mapValue, ok := value.(map[string]interface{}); ok {
-			// Create new map if nil
-			if field.IsNil() {
-				field.Set(reflect.MakeMap(field.Type()))
-			}
+	// For other pointer types, recursively set the pointed-to value
+	return setFieldValue(field.Elem(), value)
+}
 
-			// Get the value type of the target map
-			valueType := field.Type().Elem()
-
-			// Iterate over source map and convert each value
-			for key, val := range mapValue {
-				// Create a new value of the target map's value type
-				newVal := reflect.New(valueType).Elem()
-
-				// Recursively set the value
-				if err := setFieldValue(newVal, val); err != nil {
-					return fmt.Errorf("failed to set map value for key %s: %w", key, err)
-				}
-
-				// Set the value in the map
-				field.SetMapIndex(reflect.ValueOf(key), newVal)
-			}
-			return nil
-		}
+// setMapField handles map field assignment.
+func setMapField(field reflect.Value, value interface{}) error {
+	mapValue, ok := value.(map[string]interface{})
+	if !ok {
+		return setScalarField(field, value)
 	}
 
-	// Check if field is a slice
+	if field.IsNil() {
+		field.Set(reflect.MakeMap(field.Type()))
+	}
+
+	valueType := field.Type().Elem()
+	for key, val := range mapValue {
+		newVal := reflect.New(valueType).Elem()
+		if err := setFieldValue(newVal, val); err != nil {
+			return fmt.Errorf("failed to set map value for key %s: %w", key, err)
+		}
+		field.SetMapIndex(reflect.ValueOf(key), newVal)
+	}
+	return nil
+}
+
+// setSliceField handles slice field assignment.
+func setSliceField(field reflect.Value, value interface{}) error {
+	sliceValue, ok := value.([]interface{})
+	if !ok {
+		return setScalarField(field, value)
+	}
+
+	return setSequenceElements(field, sliceValue, func(length int) reflect.Value {
+		return reflect.MakeSlice(field.Type(), length, length)
+	})
+}
+
+// setArrayField handles array field assignment.
+func setArrayField(field reflect.Value, value interface{}) error {
+	sliceValue, ok := value.([]interface{})
+	if !ok {
+		return setScalarField(field, value)
+	}
+
+	if len(sliceValue) != field.Len() {
+		return fmt.Errorf("array length mismatch: expected %d, got %d", field.Len(), len(sliceValue))
+	}
+
+	return setSequenceElements(field, sliceValue, func(length int) reflect.Value {
+		return field // Arrays are already allocated
+	})
+}
+
+// setSequenceElements sets elements for slice or array types.
+// The makeContainer function creates the container (slice) or returns the existing one (array).
+func setSequenceElements(field reflect.Value, values []interface{}, makeContainer func(int) reflect.Value) error {
+	elemType := field.Type().Elem()
+	container := makeContainer(len(values))
+
+	for i, val := range values {
+		newElem := reflect.New(elemType).Elem()
+		if err := setFieldValue(newElem, val); err != nil {
+			return fmt.Errorf("failed to set element at index %d: %w", i, err)
+		}
+		container.Index(i).Set(newElem)
+	}
+
+	// Only set the field if we created a new slice (not for arrays)
 	if field.Kind() == reflect.Slice {
-		if sliceValue, ok := value.([]interface{}); ok {
-			// Get the element type of the target slice
-			elemType := field.Type().Elem()
-
-			// Create new slice with the same length
-			newSlice := reflect.MakeSlice(field.Type(), len(sliceValue), len(sliceValue))
-
-			// Iterate over source slice and convert each element
-			for i, val := range sliceValue {
-				// Create a new value of the target slice's element type
-				newElem := reflect.New(elemType).Elem()
-
-				// Recursively set the value
-				if err := setFieldValue(newElem, val); err != nil {
-					return fmt.Errorf("failed to set slice element at index %d: %w", i, err)
-				}
-
-				// Set the element in the slice
-				newSlice.Index(i).Set(newElem)
-			}
-
-			// Set the slice to the field
-			field.Set(newSlice)
-			return nil
-		}
+		field.Set(container)
 	}
 
+	return nil
+}
+
+// setScalarField handles scalar (primitive) field assignment with type conversion.
+func setScalarField(field reflect.Value, value interface{}) error {
 	val := reflect.ValueOf(value)
 
-	// Try direct assignment first
 	if val.Type().AssignableTo(field.Type()) {
 		field.Set(val)
 		return nil
 	}
 
-	// Try conversion
 	if val.Type().ConvertibleTo(field.Type()) {
 		field.Set(val.Convert(field.Type()))
 		return nil
