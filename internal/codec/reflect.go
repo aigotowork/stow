@@ -444,6 +444,19 @@ func setSequenceElements(field reflect.Value, values []interface{}, makeContaine
 func setScalarField(field reflect.Value, value interface{}) error {
 	val := reflect.ValueOf(value)
 
+	// Special handling for time.Time
+	if field.Type() == reflect.TypeOf(time.Time{}) {
+		return setTimeField(field, value)
+	}
+
+	// Special handling for *time.Time
+	if field.Type() == reflect.TypeOf((*time.Time)(nil)) {
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		return setTimeField(field.Elem(), value)
+	}
+
 	if val.Type().AssignableTo(field.Type()) {
 		field.Set(val)
 		return nil
@@ -455,6 +468,52 @@ func setScalarField(field reflect.Value, value interface{}) error {
 	}
 
 	return fmt.Errorf("cannot assign %v to %v", val.Type(), field.Type())
+}
+
+// setTimeField handles time.Time field assignment from various input types.
+// Supports: time.Time, *time.Time, string (RFC3339), and other standard formats.
+func setTimeField(field reflect.Value, value interface{}) error {
+	switch v := value.(type) {
+	case time.Time:
+		field.Set(reflect.ValueOf(v))
+		return nil
+
+	case *time.Time:
+		if v != nil {
+			field.Set(reflect.ValueOf(*v))
+		} else {
+			field.Set(reflect.Zero(field.Type()))
+		}
+		return nil
+
+	case string:
+		// Try parsing with various common formats
+		formats := []string{
+			time.RFC3339,
+			time.RFC3339Nano,
+			"2006-01-02T15:04:05Z07:00",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+		}
+
+		for _, format := range formats {
+			if t, err := time.Parse(format, v); err == nil {
+				field.Set(reflect.ValueOf(t))
+				return nil
+			}
+		}
+
+		return fmt.Errorf("cannot parse string %q as time.Time", v)
+
+	default:
+		// Try direct assignment as fallback
+		val := reflect.ValueOf(value)
+		if val.Type().AssignableTo(field.Type()) {
+			field.Set(val)
+			return nil
+		}
+		return fmt.Errorf("cannot assign %T to time.Time", value)
+	}
 }
 
 // IsSimpleType checks if a type is a simple (primitive) type.

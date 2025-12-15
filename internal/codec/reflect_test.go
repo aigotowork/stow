@@ -4,18 +4,19 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ========== IsBlob Tests (0% coverage) ==========
 
 func TestIsBlob(t *testing.T) {
 	tests := []struct {
-		name       string
-		value      interface{}
-		tagInfo    TagInfo
-		threshold  int64
-		forceFile  bool
-		expected   bool
+		name      string
+		value     interface{}
+		tagInfo   TagInfo
+		threshold int64
+		forceFile bool
+		expected  bool
 	}{
 		{
 			name:      "nil value",
@@ -900,3 +901,201 @@ func TestToMapFromMapRoundTrip(t *testing.T) {
 	}
 }
 
+// ========== Time.Time Handling Tests ==========
+
+func TestFromMapWithTimeFields(t *testing.T) {
+	type Event struct {
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+
+	// Test with string time values (as they come from JSON)
+	data := map[string]interface{}{
+		"name":       "Test Event",
+		"created_at": "2023-12-15T10:30:00Z",
+		"updated_at": "2023-12-15T15:45:30Z",
+	}
+
+	var result Event
+	err := FromMap(data, &result)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if result.Name != "Test Event" {
+		t.Errorf("Name: expected %q, got %q", "Test Event", result.Name)
+	}
+
+	expectedCreated, _ := time.Parse(time.RFC3339, "2023-12-15T10:30:00Z")
+	if !result.CreatedAt.Equal(expectedCreated) {
+		t.Errorf("CreatedAt: expected %v, got %v", expectedCreated, result.CreatedAt)
+	}
+
+	expectedUpdated, _ := time.Parse(time.RFC3339, "2023-12-15T15:45:30Z")
+	if !result.UpdatedAt.Equal(expectedUpdated) {
+		t.Errorf("UpdatedAt: expected %v, got %v", expectedUpdated, result.UpdatedAt)
+	}
+}
+
+func TestFromMapWithTimePointer(t *testing.T) {
+	type Event struct {
+		Name      string     `json:"name"`
+		CreatedAt *time.Time `json:"created_at"`
+	}
+
+	// Test with string time value
+	data := map[string]interface{}{
+		"name":       "Test Event",
+		"created_at": "2023-12-15T10:30:00Z",
+	}
+
+	var result Event
+	err := FromMap(data, &result)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if result.CreatedAt == nil {
+		t.Fatal("CreatedAt is nil")
+	}
+
+	expectedCreated, _ := time.Parse(time.RFC3339, "2023-12-15T10:30:00Z")
+	if !result.CreatedAt.Equal(expectedCreated) {
+		t.Errorf("CreatedAt: expected %v, got %v", expectedCreated, *result.CreatedAt)
+	}
+}
+
+func TestFromMapWithTimeInSlice(t *testing.T) {
+	// This is the actual bug case from the error message
+	type Group struct {
+		ID        int       `json:"id"`
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	type Schedule struct {
+		Groups []Group `json:"groups"`
+	}
+
+	data := map[string]interface{}{
+		"groups": []interface{}{
+			map[string]interface{}{
+				"id":         1,
+				"name":       "Group 1",
+				"created_at": "2023-12-15T10:30:00Z",
+			},
+			map[string]interface{}{
+				"id":         2,
+				"name":       "Group 2",
+				"created_at": "2023-12-15T11:45:00Z",
+			},
+		},
+	}
+
+	var result Schedule
+	err := FromMap(data, &result)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if len(result.Groups) != 2 {
+		t.Fatalf("Expected 2 groups, got %d", len(result.Groups))
+	}
+
+	expectedTime1, _ := time.Parse(time.RFC3339, "2023-12-15T10:30:00Z")
+	if !result.Groups[0].CreatedAt.Equal(expectedTime1) {
+		t.Errorf("Groups[0].CreatedAt: expected %v, got %v", expectedTime1, result.Groups[0].CreatedAt)
+	}
+
+	expectedTime2, _ := time.Parse(time.RFC3339, "2023-12-15T11:45:00Z")
+	if !result.Groups[1].CreatedAt.Equal(expectedTime2) {
+		t.Errorf("Groups[1].CreatedAt: expected %v, got %v", expectedTime2, result.Groups[1].CreatedAt)
+	}
+}
+
+func TestFromMapWithTimeFormats(t *testing.T) {
+	type Event struct {
+		Timestamp time.Time `json:"timestamp"`
+	}
+
+	tests := []struct {
+		name   string
+		value  string
+		format string
+	}{
+		{"RFC3339", "2023-12-15T10:30:00Z", time.RFC3339},
+		{"RFC3339Nano", "2023-12-15T10:30:00.123456789Z", time.RFC3339Nano},
+		{"DateTime", "2023-12-15 10:30:00", "2006-01-02 15:04:05"},
+		{"Date", "2023-12-15", "2006-01-02"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := map[string]interface{}{
+				"timestamp": tt.value,
+			}
+
+			var result Event
+			err := FromMap(data, &result)
+			if err != nil {
+				t.Fatalf("FromMap failed: %v", err)
+			}
+
+			expected, _ := time.Parse(tt.format, tt.value)
+			if !result.Timestamp.Equal(expected) {
+				t.Errorf("Timestamp: expected %v, got %v", expected, result.Timestamp)
+			}
+		})
+	}
+}
+
+func TestFromMapWithInvalidTimeString(t *testing.T) {
+	type Event struct {
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	data := map[string]interface{}{
+		"created_at": "invalid-time-string",
+	}
+
+	var result Event
+	err := FromMap(data, &result)
+	if err == nil {
+		t.Fatal("Expected error for invalid time string, got nil")
+	}
+}
+
+func TestToMapFromMapTimeRoundTrip(t *testing.T) {
+	type Event struct {
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	now := time.Now().UTC().Truncate(time.Second) // Truncate to avoid precision issues
+	original := Event{
+		Name:      "Test Event",
+		CreatedAt: now,
+	}
+
+	// Convert to map
+	m, err := ToMap(original)
+	if err != nil {
+		t.Fatalf("ToMap failed: %v", err)
+	}
+
+	// Convert back
+	var result Event
+	err = FromMap(m, &result)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if result.Name != original.Name {
+		t.Errorf("Name mismatch: expected %q, got %q", original.Name, result.Name)
+	}
+
+	if !result.CreatedAt.Equal(original.CreatedAt) {
+		t.Errorf("CreatedAt mismatch: expected %v, got %v", original.CreatedAt, result.CreatedAt)
+	}
+}
