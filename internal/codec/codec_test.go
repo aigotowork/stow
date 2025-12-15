@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/aigotowork/stow/internal/blob"
@@ -932,5 +933,790 @@ func TestUnmarshalStructWithSliceOfStructs(t *testing.T) {
 	}
 	if collection.Items[1].Name != "Second Item" {
 		t.Errorf("Items[1].Name mismatch: got %q", collection.Items[1].Name)
+	}
+}
+
+// ========== Advanced Type Conversion Tests ==========
+
+// TestUnmarshalNumericTypeConversion tests numeric type conversions
+func TestUnmarshalNumericTypeConversion(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Numbers struct {
+		Int8Val   int8
+		Int16Val  int16
+		Int32Val  int32
+		Int64Val  int64
+		Uint8Val  uint8
+		Uint16Val uint16
+		Uint32Val uint32
+		Uint64Val uint64
+		Float32Val float32
+		Float64Val float64
+	}
+
+	// JSON unmarshaling typically gives us float64 for numbers
+	data := map[string]interface{}{
+		"Int8Val":    float64(42),
+		"Int16Val":   float64(1000),
+		"Int32Val":   float64(100000),
+		"Int64Val":   float64(1000000),
+		"Uint8Val":   float64(200),
+		"Uint16Val":  float64(50000),
+		"Uint32Val":  float64(3000000),
+		"Uint64Val":  float64(9000000),
+		"Float32Val": float64(3.14),
+		"Float64Val": float64(2.71828),
+	}
+
+	var numbers Numbers
+	err := unmarshaler.Unmarshal(data, &numbers)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Verify conversions
+	if numbers.Int8Val != 42 {
+		t.Errorf("Int8Val mismatch: got %d", numbers.Int8Val)
+	}
+	if numbers.Int16Val != 1000 {
+		t.Errorf("Int16Val mismatch: got %d", numbers.Int16Val)
+	}
+	if numbers.Float32Val != 3.14 {
+		t.Errorf("Float32Val mismatch: got %f", numbers.Float32Val)
+	}
+}
+
+// TestUnmarshalEmptyCollections tests empty maps and slices
+func TestUnmarshalEmptyCollections(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Container struct {
+		EmptyMap   map[string]string
+		EmptySlice []string
+		Name       string
+	}
+
+	data := map[string]interface{}{
+		"EmptyMap":   map[string]interface{}{},
+		"EmptySlice": []interface{}{},
+		"Name":       "test",
+	}
+
+	var container Container
+	err := unmarshaler.Unmarshal(data, &container)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if container.EmptyMap == nil {
+		t.Error("EmptyMap should not be nil")
+	}
+	if len(container.EmptyMap) != 0 {
+		t.Errorf("EmptyMap should have length 0, got %d", len(container.EmptyMap))
+	}
+
+	if container.EmptySlice == nil {
+		t.Error("EmptySlice should not be nil")
+	}
+	if len(container.EmptySlice) != 0 {
+		t.Errorf("EmptySlice should have length 0, got %d", len(container.EmptySlice))
+	}
+}
+
+// TestUnmarshalNilValues tests nil value handling
+func TestUnmarshalNilValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Optional struct {
+		Name        string
+		Description *string
+		Count       *int
+	}
+
+	data := map[string]interface{}{
+		"Name":        "test",
+		"Description": nil,
+		"Count":       nil,
+	}
+
+	var optional Optional
+	err := unmarshaler.Unmarshal(data, &optional)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if optional.Name != "test" {
+		t.Errorf("Name mismatch: got %q", optional.Name)
+	}
+
+	if optional.Description != nil {
+		t.Error("Description should be nil")
+	}
+
+	if optional.Count != nil {
+		t.Error("Count should be nil")
+	}
+}
+
+// TestUnmarshalNestedMaps tests nested map structures
+func TestUnmarshalNestedMaps(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Config struct {
+		Settings map[string]map[string]string
+	}
+
+	data := map[string]interface{}{
+		"Settings": map[string]interface{}{
+			"database": map[string]interface{}{
+				"host": "localhost",
+				"port": "5432",
+			},
+			"cache": map[string]interface{}{
+				"host": "redis",
+				"port": "6379",
+			},
+		},
+	}
+
+	var config Config
+	err := unmarshaler.Unmarshal(data, &config)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if config.Settings == nil {
+		t.Fatal("Settings should not be nil")
+	}
+
+	if len(config.Settings) != 2 {
+		t.Errorf("Settings length mismatch: got %d, want 2", len(config.Settings))
+	}
+
+	if config.Settings["database"]["host"] != "localhost" {
+		t.Errorf("database host mismatch: got %q", config.Settings["database"]["host"])
+	}
+
+	if config.Settings["cache"]["port"] != "6379" {
+		t.Errorf("cache port mismatch: got %q", config.Settings["cache"]["port"])
+	}
+}
+
+// TestUnmarshalNestedSlices tests nested slice structures
+func TestUnmarshalNestedSlices(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Matrix struct {
+		Data [][]int
+	}
+
+	data := map[string]interface{}{
+		"Data": []interface{}{
+			[]interface{}{1, 2, 3},
+			[]interface{}{4, 5, 6},
+			[]interface{}{7, 8, 9},
+		},
+	}
+
+	var matrix Matrix
+	err := unmarshaler.Unmarshal(data, &matrix)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if matrix.Data == nil {
+		t.Fatal("Data should not be nil")
+	}
+
+	if len(matrix.Data) != 3 {
+		t.Errorf("Data length mismatch: got %d, want 3", len(matrix.Data))
+	}
+
+	if len(matrix.Data[0]) != 3 {
+		t.Errorf("Data[0] length mismatch: got %d, want 3", len(matrix.Data[0]))
+	}
+
+	if matrix.Data[1][1] != 5 {
+		t.Errorf("Data[1][1] mismatch: got %d, want 5", matrix.Data[1][1])
+	}
+}
+
+// TestUnmarshalMapWithSliceValues tests map containing slices
+func TestUnmarshalMapWithSliceValues(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Groups struct {
+		Members map[string][]string
+	}
+
+	data := map[string]interface{}{
+		"Members": map[string]interface{}{
+			"admin":     []interface{}{"alice", "bob"},
+			"developer": []interface{}{"charlie", "david", "eve"},
+			"guest":     []interface{}{"frank"},
+		},
+	}
+
+	var groups Groups
+	err := unmarshaler.Unmarshal(data, &groups)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if groups.Members == nil {
+		t.Fatal("Members should not be nil")
+	}
+
+	if len(groups.Members["admin"]) != 2 {
+		t.Errorf("admin group length mismatch: got %d, want 2", len(groups.Members["admin"]))
+	}
+
+	if groups.Members["admin"][0] != "alice" {
+		t.Errorf("admin[0] mismatch: got %q", groups.Members["admin"][0])
+	}
+
+	if len(groups.Members["developer"]) != 3 {
+		t.Errorf("developer group length mismatch: got %d, want 3", len(groups.Members["developer"]))
+	}
+}
+
+// TestUnmarshalSliceWithMapElements tests slice containing maps
+func TestUnmarshalSliceWithMapElements(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Records struct {
+		Items []map[string]string
+	}
+
+	data := map[string]interface{}{
+		"Items": []interface{}{
+			map[string]interface{}{
+				"id":   "1",
+				"name": "Item 1",
+			},
+			map[string]interface{}{
+				"id":   "2",
+				"name": "Item 2",
+			},
+		},
+	}
+
+	var records Records
+	err := unmarshaler.Unmarshal(data, &records)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if records.Items == nil {
+		t.Fatal("Items should not be nil")
+	}
+
+	if len(records.Items) != 2 {
+		t.Errorf("Items length mismatch: got %d, want 2", len(records.Items))
+	}
+
+	if records.Items[0]["name"] != "Item 1" {
+		t.Errorf("Items[0][name] mismatch: got %q", records.Items[0]["name"])
+	}
+}
+
+// TestUnmarshalComplexNesting tests deeply nested structures
+func TestUnmarshalComplexNesting(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Tag struct {
+		Name  string
+		Value string
+	}
+
+	type Resource struct {
+		ID   string
+		Tags []Tag
+	}
+
+	type Environment struct {
+		Name      string
+		Resources map[string][]Resource
+	}
+
+	data := map[string]interface{}{
+		"Name": "production",
+		"Resources": map[string]interface{}{
+			"compute": []interface{}{
+				map[string]interface{}{
+					"ID": "vm-1",
+					"Tags": []interface{}{
+						map[string]interface{}{
+							"Name":  "environment",
+							"Value": "prod",
+						},
+						map[string]interface{}{
+							"Name":  "team",
+							"Value": "backend",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	var env Environment
+	err := unmarshaler.Unmarshal(data, &env)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if env.Name != "production" {
+		t.Errorf("Name mismatch: got %q", env.Name)
+	}
+
+	if len(env.Resources["compute"]) != 1 {
+		t.Errorf("compute resources length mismatch: got %d, want 1", len(env.Resources["compute"]))
+	}
+
+	resource := env.Resources["compute"][0]
+	if resource.ID != "vm-1" {
+		t.Errorf("Resource ID mismatch: got %q", resource.ID)
+	}
+
+	if len(resource.Tags) != 2 {
+		t.Errorf("Tags length mismatch: got %d, want 2", len(resource.Tags))
+	}
+
+	if resource.Tags[0].Name != "environment" || resource.Tags[0].Value != "prod" {
+		t.Errorf("Tag[0] mismatch: got %+v", resource.Tags[0])
+	}
+}
+
+// TestUnmarshalWithJSONTags tests proper handling of JSON tags
+func TestUnmarshalWithJSONTags(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Person struct {
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Age       int    `json:"age"`
+		Email     string `json:"email_address"`
+	}
+
+	data := map[string]interface{}{
+		"first_name":    "John",
+		"last_name":     "Doe",
+		"age":           float64(30),
+		"email_address": "john@example.com",
+	}
+
+	var person Person
+	err := unmarshaler.Unmarshal(data, &person)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if person.FirstName != "John" {
+		t.Errorf("FirstName mismatch: got %q", person.FirstName)
+	}
+
+	if person.LastName != "Doe" {
+		t.Errorf("LastName mismatch: got %q", person.LastName)
+	}
+
+	if person.Email != "john@example.com" {
+		t.Errorf("Email mismatch: got %q", person.Email)
+	}
+}
+
+// TestUnmarshalSliceOfPointers tests slice with pointer elements
+func TestUnmarshalSliceOfPointers(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Node struct {
+		ID   string
+		Name string
+	}
+
+	type Graph struct {
+		Nodes []*Node
+	}
+
+	data := map[string]interface{}{
+		"Nodes": []interface{}{
+			map[string]interface{}{
+				"ID":   "node1",
+				"Name": "First Node",
+			},
+			map[string]interface{}{
+				"ID":   "node2",
+				"Name": "Second Node",
+			},
+		},
+	}
+
+	var graph Graph
+	err := unmarshaler.Unmarshal(data, &graph)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if len(graph.Nodes) != 2 {
+		t.Errorf("Nodes length mismatch: got %d, want 2", len(graph.Nodes))
+	}
+
+	if graph.Nodes[0] == nil {
+		t.Fatal("Nodes[0] should not be nil")
+	}
+
+	if graph.Nodes[0].ID != "node1" {
+		t.Errorf("Nodes[0].ID mismatch: got %q", graph.Nodes[0].ID)
+	}
+}
+
+// TestUnmarshalMissingFields tests handling of missing fields in data
+func TestUnmarshalMissingFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Complete struct {
+		Required string
+		Optional string
+		Missing  string
+		Count    int
+	}
+
+	// Data is missing "Missing" and "Count" fields
+	data := map[string]interface{}{
+		"Required": "present",
+		"Optional": "also present",
+	}
+
+	var complete Complete
+	err := unmarshaler.Unmarshal(data, &complete)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if complete.Required != "present" {
+		t.Errorf("Required mismatch: got %q", complete.Required)
+	}
+
+	// Missing fields should remain at zero value
+	if complete.Missing != "" {
+		t.Errorf("Missing should be empty string, got %q", complete.Missing)
+	}
+
+	if complete.Count != 0 {
+		t.Errorf("Count should be 0, got %d", complete.Count)
+	}
+}
+
+// ========== Additional Coverage Tests ==========
+
+// TestUnmarshalToMapTarget tests unmarshaling directly into a map target
+func TestUnmarshalToMapTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	data := map[string]interface{}{
+		"key1": "value1",
+		"key2": float64(42),
+		"key3": true,
+	}
+
+	var result map[string]interface{}
+	err := unmarshaler.Unmarshal(data, &result)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if result["key1"] != "value1" {
+		t.Errorf("key1 mismatch: got %v", result["key1"])
+	}
+
+	if result["key2"] != float64(42) {
+		t.Errorf("key2 mismatch: got %v", result["key2"])
+	}
+
+	if result["key3"] != true {
+		t.Errorf("key3 mismatch: got %v", result["key3"])
+	}
+}
+
+// TestUnmarshalSimple tests UnmarshalSimple method
+func TestUnmarshalSimple(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	// Test simple string
+	var str string
+	err := unmarshaler.UnmarshalSimple("test string", &str)
+	if err != nil {
+		t.Fatalf("UnmarshalSimple failed: %v", err)
+	}
+
+	if str != "test string" {
+		t.Errorf("String mismatch: got %q", str)
+	}
+
+	// Test simple number
+	var num int
+	err = unmarshaler.UnmarshalSimple(42, &num)
+	if err != nil {
+		t.Fatalf("UnmarshalSimple failed: %v", err)
+	}
+
+	if num != 42 {
+		t.Errorf("Number mismatch: got %d", num)
+	}
+}
+
+// TestUnmarshalWithLogger tests warning logging
+func TestUnmarshalWithLogger(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	// Mock logger that implements the Logger interface
+	var mockLogger Logger = &MockLogger{warnings: make([]string, 0)}
+	unmarshaler.SetLogger(mockLogger)
+
+	type Doc struct {
+		Content []byte
+	}
+
+	// Create data with non-existent blob reference
+	data := map[string]interface{}{
+		"Content": map[string]interface{}{
+			"$blob": true,
+			"loc":   "_blobs/nonexistent.bin",
+			"hash":  "abc123",
+			"size":  int64(100),
+		},
+	}
+
+	var doc Doc
+	err := unmarshaler.Unmarshal(data, &doc)
+
+	// Should not error, but should log warning
+	if err != nil {
+		t.Fatalf("Unmarshal should not error: %v", err)
+	}
+
+	// Content should be zero value
+	if doc.Content != nil {
+		t.Error("Content should be nil due to missing blob")
+	}
+}
+
+// MockLogger implements Logger interface for testing
+type MockLogger struct {
+	warnings []string
+}
+
+func (m *MockLogger) Warn(msg string, fields ...interface{}) {
+	m.warnings = append(m.warnings, msg)
+}
+
+// TestScalarWrapping tests scalar value wrapping/unwrapping
+func TestScalarWrapping(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	// Test wrapped scalar
+	data := map[string]interface{}{
+		"$value": "scalar string",
+	}
+
+	var result string
+	err := unmarshaler.Unmarshal(data, &result)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if result != "scalar string" {
+		t.Errorf("Result mismatch: got %q", result)
+	}
+
+	// Test wrapped nil
+	nilData := map[string]interface{}{
+		"$value": nil,
+	}
+
+	var nilResult *string
+	err = unmarshaler.Unmarshal(nilData, &nilResult)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if nilResult != nil {
+		t.Error("Result should be nil")
+	}
+}
+
+// TestFromMapWithNestedStructs tests FromMap with nested structures
+func TestFromMapWithNestedStructs(t *testing.T) {
+	type Address struct {
+		Street string
+		City   string
+	}
+
+	type Person struct {
+		Name    string
+		Address Address
+	}
+
+	data := map[string]interface{}{
+		"Name": "Alice",
+		"Address": map[string]interface{}{
+			"Street": "123 Main St",
+			"City":   "Springfield",
+		},
+	}
+
+	var person Person
+	err := FromMap(data, &person)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if person.Name != "Alice" {
+		t.Errorf("Name mismatch: got %q", person.Name)
+	}
+
+	if person.Address.Street != "123 Main St" {
+		t.Errorf("Street mismatch: got %q", person.Address.Street)
+	}
+
+	if person.Address.City != "Springfield" {
+		t.Errorf("City mismatch: got %q", person.Address.City)
+	}
+}
+
+// TestFromMapWithPointerToStruct tests FromMap with pointer to nested struct
+func TestFromMapWithPointerToStruct(t *testing.T) {
+	type Metadata struct {
+		Version int
+		Author  string
+	}
+
+	type Document struct {
+		Title    string
+		Metadata *Metadata
+	}
+
+	data := map[string]interface{}{
+		"Title": "Test Doc",
+		"Metadata": map[string]interface{}{
+			"Version": float64(1),
+			"Author":  "Bob",
+		},
+	}
+
+	var doc Document
+	err := FromMap(data, &doc)
+	if err != nil {
+		t.Fatalf("FromMap failed: %v", err)
+	}
+
+	if doc.Title != "Test Doc" {
+		t.Errorf("Title mismatch: got %q", doc.Title)
+	}
+
+	if doc.Metadata == nil {
+		t.Fatal("Metadata should not be nil")
+	}
+
+	if doc.Metadata.Version != 1 {
+		t.Errorf("Version mismatch: got %d", doc.Metadata.Version)
+	}
+
+	if doc.Metadata.Author != "Bob" {
+		t.Errorf("Author mismatch: got %q", doc.Metadata.Author)
+	}
+}
+
+// TestIsSimpleType tests the IsSimpleType helper function
+func TestIsSimpleType(t *testing.T) {
+	// Test simple types
+	if !IsSimpleType(reflect.TypeOf(int(0))) {
+		t.Error("int should be simple type")
+	}
+
+	if !IsSimpleType(reflect.TypeOf(string(""))) {
+		t.Error("string should be simple type")
+	}
+
+	if !IsSimpleType(reflect.TypeOf(float64(0))) {
+		t.Error("float64 should be simple type")
+	}
+
+	if !IsSimpleType(reflect.TypeOf(bool(false))) {
+		t.Error("bool should be simple type")
+	}
+
+	// Test complex types
+	if IsSimpleType(reflect.TypeOf(struct{}{})) {
+		t.Error("struct should not be simple type")
+	}
+
+	if IsSimpleType(reflect.TypeOf([]int{})) {
+		t.Error("slice should not be simple type")
+	}
+
+	if IsSimpleType(reflect.TypeOf(map[string]int{})) {
+		t.Error("map should not be simple type")
 	}
 }
