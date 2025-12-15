@@ -795,3 +795,142 @@ func TestUnmarshalStructWithMapOfSimpleTypes(t *testing.T) {
 		t.Errorf("timeout setting mismatch: got %q", config.Settings["timeout"])
 	}
 }
+
+// TestUnmarshalStructWithSliceField tests unmarshaling a struct that contains
+// slice fields (e.g., []string, []int).
+// This ensures the fix for "cannot assign []interface{} to []string" works correctly.
+func TestUnmarshalStructWithSliceField(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Playlist struct {
+		Name     string
+		TrackIDs []string
+		Ratings  []int
+	}
+
+	// Create test data with []interface{} containing values
+	data := map[string]interface{}{
+		"Name":     "My Favorites",
+		"TrackIDs": []interface{}{"track1", "track2", "track3"},
+		"Ratings":  []interface{}{5, 4, 5},
+	}
+
+	// Unmarshal into target struct
+	var playlist Playlist
+	err := unmarshaler.Unmarshal(data, &playlist)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Verify playlist name
+	if playlist.Name != "My Favorites" {
+		t.Errorf("Playlist name mismatch: got %q, want %q", playlist.Name, "My Favorites")
+	}
+
+	// Verify TrackIDs slice
+	if playlist.TrackIDs == nil {
+		t.Fatal("TrackIDs slice should not be nil")
+	}
+
+	if len(playlist.TrackIDs) != 3 {
+		t.Errorf("TrackIDs length mismatch: got %d, want 3", len(playlist.TrackIDs))
+	}
+
+	expectedIDs := []string{"track1", "track2", "track3"}
+	for i, expected := range expectedIDs {
+		if playlist.TrackIDs[i] != expected {
+			t.Errorf("TrackIDs[%d] mismatch: got %q, want %q", i, playlist.TrackIDs[i], expected)
+		}
+	}
+
+	// Verify Ratings slice
+	if playlist.Ratings == nil {
+		t.Fatal("Ratings slice should not be nil")
+	}
+
+	if len(playlist.Ratings) != 3 {
+		t.Errorf("Ratings length mismatch: got %d, want 3", len(playlist.Ratings))
+	}
+
+	expectedRatings := []int{5, 4, 5}
+	for i, expected := range expectedRatings {
+		if playlist.Ratings[i] != expected {
+			t.Errorf("Ratings[%d] mismatch: got %d, want %d", i, playlist.Ratings[i], expected)
+		}
+	}
+}
+
+// TestUnmarshalStructWithSliceOfStructs tests unmarshaling a slice of structs
+func TestUnmarshalStructWithSliceOfStructs(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Item struct {
+		ID   string
+		Name string
+	}
+
+	type Collection struct {
+		Title string
+		Items []Item
+	}
+
+	// Create test data with []interface{} containing nested maps
+	data := map[string]interface{}{
+		"Title": "My Collection",
+		"Items": []interface{}{
+			map[string]interface{}{
+				"ID":   "item1",
+				"Name": "First Item",
+			},
+			map[string]interface{}{
+				"ID":   "item2",
+				"Name": "Second Item",
+			},
+		},
+	}
+
+	// Unmarshal into target struct
+	var collection Collection
+	err := unmarshaler.Unmarshal(data, &collection)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Verify collection title
+	if collection.Title != "My Collection" {
+		t.Errorf("Collection title mismatch: got %q", collection.Title)
+	}
+
+	// Verify items slice
+	if collection.Items == nil {
+		t.Fatal("Items slice should not be nil")
+	}
+
+	if len(collection.Items) != 2 {
+		t.Errorf("Items length mismatch: got %d, want 2", len(collection.Items))
+	}
+
+	// Verify first item
+	if collection.Items[0].ID != "item1" {
+		t.Errorf("Items[0].ID mismatch: got %q", collection.Items[0].ID)
+	}
+	if collection.Items[0].Name != "First Item" {
+		t.Errorf("Items[0].Name mismatch: got %q", collection.Items[0].Name)
+	}
+
+	// Verify second item
+	if collection.Items[1].ID != "item2" {
+		t.Errorf("Items[1].ID mismatch: got %q", collection.Items[1].ID)
+	}
+	if collection.Items[1].Name != "Second Item" {
+		t.Errorf("Items[1].Name mismatch: got %q", collection.Items[1].Name)
+	}
+}

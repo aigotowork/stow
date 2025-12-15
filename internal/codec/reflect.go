@@ -379,6 +379,35 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 		}
 	}
 
+	// Check if field is a slice
+	if field.Kind() == reflect.Slice {
+		if sliceValue, ok := value.([]interface{}); ok {
+			// Get the element type of the target slice
+			elemType := field.Type().Elem()
+
+			// Create new slice with the same length
+			newSlice := reflect.MakeSlice(field.Type(), len(sliceValue), len(sliceValue))
+
+			// Iterate over source slice and convert each element
+			for i, val := range sliceValue {
+				// Create a new value of the target slice's element type
+				newElem := reflect.New(elemType).Elem()
+
+				// Recursively set the value
+				if err := setFieldValue(newElem, val); err != nil {
+					return fmt.Errorf("failed to set slice element at index %d: %w", i, err)
+				}
+
+				// Set the element in the slice
+				newSlice.Index(i).Set(newElem)
+			}
+
+			// Set the slice to the field
+			field.Set(newSlice)
+			return nil
+		}
+	}
+
 	val := reflect.ValueOf(value)
 
 	// Try direct assignment first
