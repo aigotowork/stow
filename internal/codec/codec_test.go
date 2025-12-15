@@ -653,3 +653,145 @@ func TestStoreBytesAsBlob(t *testing.T) {
 		t.Error("Stored content mismatch")
 	}
 }
+
+// TestUnmarshalStructWithMapField tests unmarshaling a struct that contains
+// a map field with pointer-to-struct values (e.g., map[string]*Track).
+// This ensures the fix for "cannot assign map[string]interface{} to map[string]*Track" works correctly.
+func TestUnmarshalStructWithMapField(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	// Define test structs
+	type Track struct {
+		Title    string
+		Duration int
+	}
+
+	type Album struct {
+		Name   string
+		Tracks map[string]*Track
+	}
+
+	// Create test data with map[string]interface{} containing nested maps
+	data := map[string]interface{}{
+		"Name": "Greatest Hits",
+		"Tracks": map[string]interface{}{
+			"track1": map[string]interface{}{
+				"Title":    "Song One",
+				"Duration": 180,
+			},
+			"track2": map[string]interface{}{
+				"Title":    "Song Two",
+				"Duration": 240,
+			},
+		},
+	}
+
+	// Unmarshal into target struct
+	var album Album
+	err := unmarshaler.Unmarshal(data, &album)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	// Verify album name
+	if album.Name != "Greatest Hits" {
+		t.Errorf("Album name mismatch: got %q, want %q", album.Name, "Greatest Hits")
+	}
+
+	// Verify map was created
+	if album.Tracks == nil {
+		t.Fatal("Tracks map should not be nil")
+	}
+
+	// Verify map length
+	if len(album.Tracks) != 2 {
+		t.Errorf("Tracks map length mismatch: got %d, want 2", len(album.Tracks))
+	}
+
+	// Verify track1
+	track1, ok := album.Tracks["track1"]
+	if !ok {
+		t.Fatal("track1 should exist in map")
+	}
+	if track1 == nil {
+		t.Fatal("track1 should not be nil")
+	}
+	if track1.Title != "Song One" {
+		t.Errorf("track1 title mismatch: got %q, want %q", track1.Title, "Song One")
+	}
+	if track1.Duration != 180 {
+		t.Errorf("track1 duration mismatch: got %d, want 180", track1.Duration)
+	}
+
+	// Verify track2
+	track2, ok := album.Tracks["track2"]
+	if !ok {
+		t.Fatal("track2 should exist in map")
+	}
+	if track2 == nil {
+		t.Fatal("track2 should not be nil")
+	}
+	if track2.Title != "Song Two" {
+		t.Errorf("track2 title mismatch: got %q, want %q", track2.Title, "Song Two")
+	}
+	if track2.Duration != 240 {
+		t.Errorf("track2 duration mismatch: got %d, want 240", track2.Duration)
+	}
+}
+
+// TestUnmarshalStructWithMapOfSimpleTypes tests unmarshaling a map with simple value types
+func TestUnmarshalStructWithMapOfSimpleTypes(t *testing.T) {
+	tmpDir := t.TempDir()
+	blobDir := filepath.Join(tmpDir, "_blobs")
+	bm, _ := blob.NewManager(blobDir, 1024*1024, 1024)
+
+	unmarshaler := NewUnmarshaler(bm)
+
+	type Config struct {
+		Name     string
+		Settings map[string]string
+	}
+
+	data := map[string]interface{}{
+		"Name": "MyConfig",
+		"Settings": map[string]interface{}{
+			"host":    "localhost",
+			"port":    "8080",
+			"timeout": "30s",
+		},
+	}
+
+	var config Config
+	err := unmarshaler.Unmarshal(data, &config)
+	if err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if config.Name != "MyConfig" {
+		t.Errorf("Name mismatch: got %q", config.Name)
+	}
+
+	if config.Settings == nil {
+		t.Fatal("Settings map should not be nil")
+	}
+
+	if len(config.Settings) != 3 {
+		t.Errorf("Settings map length mismatch: got %d, want 3", len(config.Settings))
+	}
+
+	if config.Settings["host"] != "localhost" {
+		t.Errorf("host setting mismatch: got %q", config.Settings["host"])
+	}
+
+	if config.Settings["port"] != "8080" {
+		t.Errorf("port setting mismatch: got %q", config.Settings["port"])
+	}
+
+	if config.Settings["timeout"] != "30s" {
+		t.Errorf("timeout setting mismatch: got %q", config.Settings["timeout"])
+	}
+}

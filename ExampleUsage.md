@@ -1,5 +1,5 @@
 # Stow KV Storage - 核心操作
-
+repo: github.com/aigotowork/stow
 **概念**: Store 管理多个 Namespace，每个 Namespace 是独立的 KV 存储空间（JSONL 格式）。如果为文件时，
 
 **三个核心方法**:

@@ -351,6 +351,34 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 		}
 	}
 
+	// Check if field is a map
+	if field.Kind() == reflect.Map {
+		if mapValue, ok := value.(map[string]interface{}); ok {
+			// Create new map if nil
+			if field.IsNil() {
+				field.Set(reflect.MakeMap(field.Type()))
+			}
+
+			// Get the value type of the target map
+			valueType := field.Type().Elem()
+
+			// Iterate over source map and convert each value
+			for key, val := range mapValue {
+				// Create a new value of the target map's value type
+				newVal := reflect.New(valueType).Elem()
+
+				// Recursively set the value
+				if err := setFieldValue(newVal, val); err != nil {
+					return fmt.Errorf("failed to set map value for key %s: %w", key, err)
+				}
+
+				// Set the value in the map
+				field.SetMapIndex(reflect.ValueOf(key), newVal)
+			}
+			return nil
+		}
+	}
+
 	val := reflect.ValueOf(value)
 
 	// Try direct assignment first
